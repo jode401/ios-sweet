@@ -84,6 +84,25 @@ index da0bbba..8ca09aa 100644
  	cbz		w10, Ltrylock_dequeue_success
  
  	mov		x0, #-1			// Failed
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+index 00568d3..8a640ba 100644
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -10892,6 +10892,14 @@ pmap_create_commpages(vm_map_address_t *kernel_data_addr, vm_map_address_t *kern
+ 
+ 	do {
+ 		int text_leaf_index = random() % num_ptes;
++#if SWEET_4K
++		/*
++		 * 4K hardware pages under a 16K VM page (PAGE_RATIO 4, > 1GB RAM):
++		 * write_pte_fast() maps a VM page with PAGE_RATIO PTEs and panics
++		 * unless the first one is aligned, so slide in whole VM pages.
++		 */
++		text_leaf_index &= ~(PAGE_RATIO - 1);
++#endif
+ 
+ 		// Generate a VA for the commpage text with the same root and twig index as data
+ 		// comm page, but with new leaf index we've just generated.
 diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
 index 06bb568..0f53f03 100644
 --- a/osfmk/arm64/arm_vm_init.c
