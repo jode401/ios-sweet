@@ -18,9 +18,14 @@ ARMv8.0). Research docs live outside this repo (`D:\ao2sios\*.md`).
   if build.sh skipped 0082 or the kernel is not at `0xfffffff007...`.
 - **Local check:** the full series 0001-0082 applied to xnu-8796.141.3 with `git apply` (LF). 0031 and 0041
   need the staged HFS source, which CI stages. NOT compiled yet.
-- **Next (E2):** `tools/qemu-sweet.py ... --cpu cortex-a53` with the 4K kernel and RAM-disk test root.
-  - Control run: the 16K kernel on cortex-a53 should fail if QEMU enforces TGran16.
-  - Then try the iOS root to launchd.
+- **Results 2026-10-22 (QEMU 8.2.2 `virt,gic-version=3`, `-cpu cortex-a53`, no RAM disk, `rd=md0`). All emulation, not the phone:**
+  - Upstream 16K kernel (run 39158169212): endless instruction abort, ESR 0x86000004 (level-0 translation fault) right after MMU on. The 16K blocker is reproduced.
+  - 4K build 1 (`9f77ecf`): MMU on with 4K pages, early stages 1-4; then UNDEF on `ldadd` (LSE). Cause: Apple clang keeps `apple-m1` under `-march`, so the build now uses `-mcpu=cortex-a53`.
+  - Build 2: the assembler rejects the two `casa` in `commpage_asm.s` (PFZ try-locks), replaced by `ldaxr/stxr` under SWEET_4K.
+  - Build 3: 11 LSE left in `libfirehose_kernel.a` (xcodebuild, outside makedefs). The workflow now builds it arm64-only with `-mcpu=cortex-a53`. VM bootstrap OK, then panic `kmem_range_init ... claim zones`: the macOS 128GB zone map does not fit, so the iOS sizes are used.
+  - **Build 5 (`2e4250f`, run 39839624981, kernel sha256 `b96d8f43...`): 0 LSE in code; boots with 0 CPU exceptions to `IOFindBSDRoot: md0 has not been configured` (expected without a RAM disk).**
+- **Next:** E2(a) init from an HFS+ RAM disk (needs `gcc-aarch64-linux-gnu`, `hfsprogs` in WSL), then E3 (scan of the iOS shared cache for ARMv8.1+) and E2(b) iOS root to launchd.
+  - The iOS userland still contains whatever LSE/FP16 Apple compiled into it. E3 decides whether that is a blocker.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
