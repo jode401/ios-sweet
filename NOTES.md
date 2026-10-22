@@ -1,5 +1,27 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Fork jode401/ios-sweet, branch `a02s-4k` (2026-10-22): Galaxy A02s experiment
+
+Separate from the sweet work below. Target: Samsung Galaxy A02s (Snapdragon 450, 8x Cortex-A53,
+ARMv8.0). Research docs live outside this repo (`D:\ao2sios\*.md`).
+
+- **Blocker being tested:** Cortex-A53 has no 16K translation granule (ARM DDI 0500F, per LKML 2017;
+  not yet read on the device). SWEET is 16K-only.
+- **Patch 0082 `sweet-4k-pages`** (built only with `SWEET_4K=1`; the 16K sweet build is unchanged):
+  - `-march=armv8-a+crypto`; no PAN; 4K pages with a sub-page L1, like XNU's own Cortex-A53 config (BCM2837).
+  - `ARM_LARGE_MEMORY` off and the iOS link address `0xfffffff007004000`: a 4K kernel only has 39 VA bits,
+    and large memory puts the kernel at -2TB.
+  - `MACH_VM_MAX_ADDRESS` = iOS value `0xFC0000000` (4K user VA is 38 bits).
+  - start.s: framebuffer alias = 8x 2MB blocks found by walking the V=P L1.
+  - The post-TTBR0 early console is disabled: the area above low globals is heap in this layout.
+- **CI:** pushes to `a02s-4k` build with `SWEET_4K=1`, artifact `xnu-kernel-4k`. A guard step fails the run
+  if build.sh skipped 0082 or the kernel is not at `0xfffffff007...`.
+- **Local check:** the full series 0001-0082 applied to xnu-8796.141.3 with `git apply` (LF). 0031 and 0041
+  need the staged HFS source, which CI stages. NOT compiled yet.
+- **Next (E2):** `tools/qemu-sweet.py ... --cpu cortex-a53` with the 4K kernel and RAM-disk test root.
+  - Control run: the 16K kernel on cortex-a53 should fail if QEMU enforces TGran16.
+  - Then try the iOS root to launchd.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<

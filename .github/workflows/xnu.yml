@@ -15,8 +15,11 @@ on:
       keep_going:
         description: make -k (collect all compile errors in one run)
         default: "true"
+      sweet_4k:
+        description: 4K pages + ARMv8.0 for Cortex-A53 targets (patch 0082)
+        default: "false"
   push:
-    branches: [main]
+    branches: [main, a02s-4k]
     paths:
       - "xnu/patches/**"
       - ".github/workflows/xnu.yml"
@@ -31,6 +34,8 @@ env:
   MACOS_VERSION: ${{ inputs.macos_version || '13.5' }}
   KERNEL_CONFIG: ${{ inputs.kernel_config || 'DEVELOPMENT' }}
   MACHINE_CONFIG: ${{ inputs.machine_config || 'SWEET' }}
+  # Read by makedefs/MakeInc.def (patch 0082). Pushes to a02s-4k always build 4K.
+  SWEET_4K: ${{ (inputs.sweet_4k == 'true' || github.ref_name == 'a02s-4k') && '1' || '0' }}
 
 jobs:
   build:
@@ -72,7 +77,18 @@ jobs:
         env:
           # keep going after errors so one run reports every compile failure
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
-        run: bash build.sh
+        run: bash build.sh 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+
+      - name: Verify 4K build
+        if: env.SWEET_4K == '1'
+        run: |
+          # build.sh only warns when a patch does not apply; a skipped 0082 would
+          # silently produce a 16K kernel.
+          if grep -n 'Skipping patch.*0082' dxb/build.log; then exit 1; fi
+          K=$(ls dxb/fakeroot/System/Library/Kernels/kernel.* | head -1)
+          # 4K kernels use the iOS layout (link address 0xfffffff007004000), not -2TB.
+          otool -l "$K" | awk '/segname __TEXT$/{f=1} f&&/vmaddr/{print; exit}' | tee vmaddr.txt
+          grep -q '0xfffffff007' vmaddr.txt
 
       - name: Package build tree for local compiles
         if: always()
@@ -119,6 +135,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: xnu-kernel
+          name: xnu-kernel${{ env.SWEET_4K == '1' && '-4k' || '' }}
           path: out/
           if-no-files-found: warn

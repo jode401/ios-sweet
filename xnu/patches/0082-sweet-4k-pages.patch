@@ -1,0 +1,148 @@
+diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
+index 9a748ea..6291002 100644
+--- a/makedefs/MakeInc.def
++++ b/makedefs/MakeInc.def
+@@ -63,6 +63,14 @@ MACHINE_FLAGS_ARM64_VMAPPLE = -DARM64_BOARD_CONFIG_VMAPPLE              -march=a
+ MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837
+ MACHINE_FLAGS_ARM64_SWEET = -DARM64_BOARD_CONFIG_SWEET                -march=armv8.2-a+crypto
+ 
++# SWEET_4K=1 (environment): same board, built for ARMv8.0 Cortex-A53 cores that
++# lack the 16K translation granule (Galaxy A02s, Snapdragon 450). 4K pages,
++# no PAN, and the iOS (non-large-memory) kernel layout: a 4K kernel only has
++# 39 address bits, too few for ARM_LARGE_MEMORY's kernel at -2TB.
++ifeq ($(SWEET_4K),1)
++MACHINE_FLAGS_ARM64_SWEET = -DARM64_BOARD_CONFIG_SWEET -DSWEET_4K=1 -march=armv8-a+crypto
++endif
++
+ 
+ #
+ # Deployment target flag
+@@ -336,6 +344,11 @@ LARGE_MEMORY_DEFINE=-DARM_LARGE_MEMORY=1
+ ARM64_PLKSEG_ADDR  =0xfffffe0004004000
+ ARM64_LINK_ADDR    =0xfffffe0007004000
+ endif
++ifeq ($(SWEET_4K),1)
++LARGE_MEMORY_DEFINE=-UARM_LARGE_MEMORY
++ARM64_PLKSEG_ADDR  =0xfffffff004004000
++ARM64_LINK_ADDR    =0xfffffff007004000
++endif
+ 
+ 
+ CFLAGS_ARM64	= -Darm64 -DARM64 -D__ARM64__ -DLP64 -DPAGE_SIZE_FIXED -DVM_KERNEL_LINK_ADDRESS=$(ARM64_LINK_ADDR) \
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+index 06bb568..0f53f03 100644
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1825,7 +1825,7 @@ init_ptpages(tt_entry_t *tt, vm_map_address_t start, vm_map_address_t end, bool
+ #define ARM64_PHYSMAP_ALIGNMENT_PADDING (PTOV_TABLE_SIZE * ARM_TT_TWIG_SIZE)
+ #endif
+ 
+-#if defined(SWEET)
++#if defined(SWEET) && !SWEET_4K
+ /*
+  * The reserved low-globals/kernel region is excluded from VM allocation.
+  * Use the otherwise empty 32MB block above low globals and below gVirtBase
+@@ -2179,7 +2179,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 
+ 	arm_set_user_tbi();
+ 
+-#if defined(SWEET)
++#if defined(SWEET) && !SWEET_4K
+ 	/* phystokv() must still refer to the bootstrap aperture here. */
+ 	sweet_early_map_final();
+ #endif
+@@ -2188,9 +2188,17 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 
+ 	ml_enable_monitor();
+ 
+-#if defined(SWEET)
++#if defined(SWEET) && !SWEET_4K
+ 	/* The final TTBR1 is live; leave the outgoing VA=PA framebuffer alias. */
+ 	sweet_early_relocate(SWEET_EARLY_FB_VA);
++#elif defined(SWEET)
++	/*
++	 * SWEET_4K: without ARM_LARGE_MEMORY the area above low globals is
++	 * kernel heap, so there is no spare block for a framebuffer alias.
++	 * Stop the early console with the VA=PA tables; the serial console
++	 * and the regular fbcon (pe_serial) take over later.
++	 */
++	sweet_early_disable();
+ #endif
+ 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+ 
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index 023086f..1b21b74 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -691,8 +691,33 @@ Lkernelcache_base_found:
+ 	orr		x11, x11, x10
+ 	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
+ 	lsr		x12, x12, #(ARM_TT_L2_SHIFT)
++#if SWEET_4K
++	/*
++	 * 4K pages: an L2 block is only 2MB and an L1 entry covers 1GB, so the
++	 * framebuffer need not share the first V=P L2 page with RAM. Find the
++	 * V=P L2 table that covers it and map 16MB (8 blocks; the panel needs
++	 * ~10MB). Skip the alias if RAM did not create that L2 table.
++	 */
++	and		x12, x10, #(ARM_TT_L1_INDEX_MASK)
++	lsr		x12, x12, #(ARM_TT_L1_SHIFT)
++	ldr		x13, [x25, x12, lsl #TTE_SHIFT]
++	tbz		x13, #0, Lsweet_fb_alias_done		// ARM_TTE_VALID
++	tbz		x13, #1, Lsweet_fb_alias_done		// ARM_TTE_TYPE_TABLE
++	and		x13, x13, #(ARM_TTE_TABLE_MASK)
++	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
++	lsr		x12, x12, #(ARM_TT_L2_SHIFT)
++	add		x13, x13, x12, lsl #TTE_SHIFT
++	mov		x12, #(0x1000000 >> ARM_TT_L2_SHIFT)
++Lsweet_fb_alias_block:
++	str		x11, [x13], #(1 << TTE_SHIFT)
++	add		x11, x11, #(ARM_TT_L2_SIZE)
++	subs	x12, x12, #1
++	b.ne	Lsweet_fb_alias_block
++Lsweet_fb_alias_done:
++#else
+ 	add		x13, x25, #(2 * PGBYTES)
+ 	str		x11, [x13, x12, lsl #TTE_SHIFT]
++#endif
+ #endif
+ 
+ 	/* Ensure TTEs are visible */
+diff --git a/osfmk/mach/arm/vm_param.h b/osfmk/mach/arm/vm_param.h
+index c013288..006e059 100644
+--- a/osfmk/mach/arm/vm_param.h
++++ b/osfmk/mach/arm/vm_param.h
+@@ -133,7 +133,11 @@ extern int PAGE_SHIFT_CONST;
+ 
+ /* system-wide values */
+ #define MACH_VM_MIN_ADDRESS_RAW 0x0ULL
+-#if defined(XNU_PLATFORM_MacOSX) || defined(XNU_PLATFORM_DriverKit)
++/*
++ * SWEET_4K: 4K pages give user space only 38 address bits, so keep the iOS
++ * limit (which the iOS userland running on SWEET expects anyway).
++ */
++#if (defined(XNU_PLATFORM_MacOSX) || defined(XNU_PLATFORM_DriverKit)) && !SWEET_4K
+ #define MACH_VM_MAX_ADDRESS_RAW 0x00007FFFFE000000ULL
+ #else
+ #define MACH_VM_MAX_ADDRESS_RAW 0x0000000FC0000000ULL
+diff --git a/pexpert/pexpert/arm64/SWEET.h b/pexpert/pexpert/arm64/SWEET.h
+index b99c2f4..c69d595 100644
+--- a/pexpert/pexpert/arm64/SWEET.h
++++ b/pexpert/pexpert/arm64/SWEET.h
+@@ -33,8 +33,16 @@
+ #define __ARM_DEBUG__             7
+ #define __ARM_ENABLE_SWAP__       1
+ #define __ARM_V8_CRYPTO_EXTENSIONS__ 1
++#if SWEET_4K
++/*
++ * Cortex-A53 (ARMv8.0): no PAN and no 16K translation granule. 4K pages
++ * with a sub-page L1 table, like Apple's own Cortex-A53 config (BCM2837).
++ */
++#define __ARM64_PMAP_SUBPAGE_L1__ 1
++#else
+ #define __ARM_PAN_AVAILABLE__     1
+ #define __ARM_16K_PG__            1
++#endif
+ 
+ #define HAS_GIC_V3                1
+ 
