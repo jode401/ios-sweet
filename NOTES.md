@@ -24,7 +24,11 @@ ARMv8.0). Research docs live outside this repo (`D:\ao2sios\*.md`).
   - Build 2: the assembler rejects the two `casa` in `commpage_asm.s` (PFZ try-locks), replaced by `ldaxr/stxr` under SWEET_4K.
   - Build 3: 11 LSE left in `libfirehose_kernel.a` (xcodebuild, outside makedefs). The workflow now builds it arm64-only with `-mcpu=cortex-a53`. VM bootstrap OK, then panic `kmem_range_init ... claim zones`: the macOS 128GB zone map does not fit, so the iOS sizes are used.
   - **Build 5 (`2e4250f`, run 39839624981, kernel sha256 `b96d8f43...`): 0 LSE in code; boots with 0 CPU exceptions to `IOFindBSDRoot: md0 has not been configured` (expected without a RAM disk).**
-- **Next:** E2(a) init from an HFS+ RAM disk (needs `gcc-aarch64-linux-gnu`, `hfsprogs` in WSL), then E3 (scan of the iOS shared cache for ARMv8.1+) and E2(b) iOS root to launchd.
+  - Build 5 + test init: panic `write_pte_fast: PTE write is unaligned` in `pmap_create_commpages`.
+    - With >1GB RAM, `arm_init.c` picks 16K VM pages on 4K hardware pages (PAGE_RATIO 4, the A8X scheme). So iOS userland sees 16K pages, good for compatibility.
+    - The random text-commpage slot was only 4K aligned (3 in 4 chance of the panic). Fixed in `b9a4d23` by sliding in whole VM pages.
+  - **Build 6 (`b9a4d23`, run 39842594355, sha256 `5e41dea7...`): the test init (`sweet-init.S` via `gcc -E` + `llvm-mc -triple arm64-apple-ios16.0` + mkinit.py, mockfs RAM disk) runs as PID 1 with heartbeats in 5/5 boots on cortex-a53.**
+- **Next:** E3 (scan of the iOS shared cache for ARMv8.1+). The IPSW is at `D:\ao2sios\ipsw`; it needs apfs-fuse in WSL. Then E2(b): iOS root to launchd.
   - The iOS userland still contains whatever LSE/FP16 Apple compiled into it. E3 decides whether that is a blocker.
 
 ## Agent handoff / active work (2026-10-15, latest)
