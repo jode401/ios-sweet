@@ -89,6 +89,12 @@ jobs:
           # 4K kernels use the iOS layout (link address 0xfffffff007004000), not -2TB.
           otool -l "$K" | awk '/segname __TEXT$/{f=1} f&&/vmaddr/{print; exit}' | tee vmaddr.txt
           grep -q '0xfffffff007' vmaddr.txt
+          # Cortex-A53 is ARMv8.0: no LSE atomics. QEMU may run them anyway,
+          # the phone would take an undefined-instruction exception.
+          xcrun objdump -d --no-show-raw-insn --mattr=+lse "$K" > dis.txt
+          N=$(grep -c -E '\s(cas|casa|casl|casal|casp|ldadd|ldclr|ldeor|ldset|ldsmax|ldsmin|ldumax|ldumin|swp|stadd|stclr|steor|stset)[abhl]*\s' dis.txt || true)
+          echo "LSE atomics in kernel: $N"
+          test "$N" -eq 0
 
       - name: Package build tree for local compiles
         if: always()

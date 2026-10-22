@@ -1,8 +1,8 @@
 diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
-index 9a748ea..6291002 100644
+index 9a748ea..d039495 100644
 --- a/makedefs/MakeInc.def
 +++ b/makedefs/MakeInc.def
-@@ -63,6 +63,14 @@ MACHINE_FLAGS_ARM64_VMAPPLE = -DARM64_BOARD_CONFIG_VMAPPLE              -march=a
+@@ -63,6 +63,17 @@ MACHINE_FLAGS_ARM64_VMAPPLE = -DARM64_BOARD_CONFIG_VMAPPLE              -march=a
  MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837
  MACHINE_FLAGS_ARM64_SWEET = -DARM64_BOARD_CONFIG_SWEET                -march=armv8.2-a+crypto
  
@@ -10,14 +10,17 @@ index 9a748ea..6291002 100644
 +# lack the 16K translation granule (Galaxy A02s, Snapdragon 450). 4K pages,
 +# no PAN, and the iOS (non-large-memory) kernel layout: a 4K kernel only has
 +# 39 address bits, too few for ARM_LARGE_MEMORY's kernel at -2TB.
++# -mcpu, not -march: for macOS targets Apple clang keeps its default CPU
++# (apple-m1) under -march and still emits ARMv8.1 LSE atomics, which the A53
++# does not have. 835769: Cortex-A53 erratum (up to r0p4; the A02s is r0p4).
 +ifeq ($(SWEET_4K),1)
-+MACHINE_FLAGS_ARM64_SWEET = -DARM64_BOARD_CONFIG_SWEET -DSWEET_4K=1 -march=armv8-a+crypto
++MACHINE_FLAGS_ARM64_SWEET = -DARM64_BOARD_CONFIG_SWEET -DSWEET_4K=1 -mcpu=cortex-a53+crypto -mfix-cortex-a53-835769
 +endif
 +
  
  #
  # Deployment target flag
-@@ -336,6 +344,11 @@ LARGE_MEMORY_DEFINE=-DARM_LARGE_MEMORY=1
+@@ -336,6 +347,11 @@ LARGE_MEMORY_DEFINE=-DARM_LARGE_MEMORY=1
  ARM64_PLKSEG_ADDR  =0xfffffe0004004000
  ARM64_LINK_ADDR    =0xfffffe0007004000
  endif
